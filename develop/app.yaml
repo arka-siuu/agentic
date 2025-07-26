@@ -1,10 +1,9 @@
 runtime: python310
 
-entrypoint: python main.py
+entrypoint: gunicorn -b :$PORT -w 4 -k uvicorn.workers.UvicornWorker main:app
 
 env_variables:
   SECRET_KEY: "sahayak-production-key-2025"
-  GOOGLE_API_KEY: "AIzaSyAI2G2R9VxNF7RqgchmKRK-acGo9ip7lyU"
 
 automatic_scaling:
   min_instances: 1
