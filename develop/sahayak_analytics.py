@@ -48,21 +48,11 @@ class SahayakAnalytics:
         self.temp_dir = tempfile.mkdtemp()
     
     def analyze_student_with_ai(self, student_data):
-        """Enhanced AI analysis with retry and improved error handling"""
+        """Enhanced AI analysis with improved error handling"""
         prompt = self._build_prompt(student_data)
 
         try:
-            # Configure a retry mechanism for transient API errors
-            retry = Retry(
-                initial=1.0,
-                maximum=60.0,
-                multiplier=2.0,
-                deadline=120.0,
-                predicate=Retry.if_transient_error
-            )
-
-            # Generate content with retry
-            response = self.model.generate_content(prompt, request_options={'retry': retry})
+            response = self.model.generate_content(prompt)
 
             if response and hasattr(response, 'text'):
                 response_text = response.text
