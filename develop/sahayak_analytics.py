@@ -9,7 +9,6 @@ import google.generativeai as genai
 import matplotlib.pyplot as plt
 import numpy as np
 import warnings
-import concurrent.futures
 from google.api_core.retry import Retry
 
 warnings.filterwarnings('ignore')
@@ -26,12 +25,10 @@ class SahayakAnalytics:
     def __init__(self, custom_data_path=None):
         """Initialize SAHAYAK Analytics with optional custom data"""
         
-        # Configuration from environment variables
-        self.api_key = os.environ.get('GOOGLE_API_KEY')
-        
         # Initialize AI client
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro')
+        # GOOGLE_API_KEY is no longer required when using Application Default Credentials
+        genai.configure()
+        self.model = genai.GenerativeModel('gemini-1.5-pro')
         
         # Load student data
         if custom_data_path and os.path.exists(custom_data_path):
@@ -51,26 +48,44 @@ class SahayakAnalytics:
         self.temp_dir = tempfile.mkdtemp()
     
     def analyze_student_with_ai(self, student_data):
-        """Enhanced AI analysis specifically for multi-grade classroom teaching"""
+        """Enhanced AI analysis with retry and improved error handling"""
         prompt = self._build_prompt(student_data)
-        response = None
-        retry = Retry(deadline=60.0)  # Increase deadline to 60 seconds
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(self.model.generate_content, prompt, retry=retry)
-            try:
-                response = future.result(timeout=65)  # 65 seconds timeout
-            except concurrent.futures.TimeoutError:
-                print(f"Timeout while analyzing {student_data.get('name', 'student')}")
-                return "Analysis unavailable due to timeout."
-        if response and hasattr(response, 'text'):
-            return response.text
-        else:
-            print(f"Error analyzing {student_data.get('name', 'student')}: No response or missing 'text' attribute")
-            print("Raw response:", response)
-            return "Error: No response received from Gemini API."
+
+        try:
+            # Configure a retry mechanism for transient API errors
+            retry = Retry(
+                initial=1.0,
+                maximum=60.0,
+                multiplier=2.0,
+                deadline=120.0,
+                predicate=Retry.if_transient_error
+            )
+
+            # Generate content with retry
+            response = self.model.generate_content(prompt, request_options={'retry': retry})
+
+            if response and hasattr(response, 'text'):
+                response_text = response.text
+                # Clean up response if it's formatted as a JSON code block
+                if response_text.startswith('```json'):
+                    response_text = response_text.replace('```json', '').replace('```', '').strip()
+
+                return json.loads(response_text)
+            else:
+                print(f"Error analyzing {student_data.get('name', 'student')}: No response or missing 'text' attribute")
+                print("Raw response:", response)
+                return self.create_enhanced_fallback_analysis(student_data)
+
+        except json.JSONDecodeError:
+            print(f"JSON parsing issue for {student_data['name']}, using fallback")
+            return self.create_enhanced_fallback_analysis(student_data)
+        except Exception as e:
+            print(f"Error analyzing {student_data['name']}: {e}")
+            return self.create_enhanced_fallback_analysis(student_data)
 
     def _build_prompt(self, student_data):
         """Build the AI prompt for student analysis"""
+        # This function now only builds the prompt, no API call
         return f"""
         You are SAHAYAK, an AI teaching assistant for teachers in multi-grade, under-resourced Indian classrooms. 
         Analyze this student and provide EXTREMELY SPECIFIC, ACTIONABLE insights that a teacher can implement TODAY.
@@ -161,36 +176,6 @@ class SahayakAnalytics:
         
         Focus on practical, low-resource solutions suitable for teachers managing multiple grades with limited materials.
         """
-        
-        try:
-            response = None
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(self.model.generate_content, prompt)
-                try:
-                    response = future.result(timeout=30)  # 30 seconds timeout
-                except concurrent.futures.TimeoutError:
-                    print(f"Timeout while analyzing {student_data.get('name', 'student')}")
-                    return None
-            
-            if response is None or not hasattr(response, 'text'):
-                print(f"Error analyzing {student_data.get('name', 'student')}: No response or missing 'text' attribute")
-                return "Analysis unavailable due to timeout or API error."
-            
-            response_text = response.text
-            
-            # Clean up response
-            if response_text.startswith('```json'):
-                response_text = response_text.replace('```json', '').replace('```', '').strip()
-            
-            analysis_data = json.loads(response_text)
-            return analysis_data
-            
-        except json.JSONDecodeError as e:
-            print(f"JSON parsing issue for {student_data['name']}, using enhanced fallback")
-            return self.create_enhanced_fallback_analysis(student_data)
-        except Exception as e:
-            print(f"Error analyzing {student_data['name']}: {e}")
-            return self.create_enhanced_fallback_analysis(student_data)
 
     def create_enhanced_fallback_analysis(self, student_data):
         """Enhanced fallback with multi-grade considerations"""
